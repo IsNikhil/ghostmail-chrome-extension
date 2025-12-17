@@ -1,12 +1,11 @@
-// Background service worker for TempMail Pro
-console.log("Service worker starting");
+/**
+ * TempMail Pro API - Chrome Extension
+ * Ported from Python temp_mail_apis.py to JavaScript
+ */
 
-// Define the API functions
-var createAddress;
-var getMessages;
-var fetchMessage;
+console.log('Loading tempMailApis.js');
 
-// Global service registry to be used directly
+// Service registry
 const SERVICES = {
   'guerrillamail': {
     name: 'Guerrilla Mail',
@@ -35,28 +34,17 @@ const SERVICES = {
   }
 };
 
-// Import everything directly in the service worker
-// Include all necessary code here instead of using importScripts
-function initializeAPI() {
-  console.log("Initializing API functions");
+// Cache for domains
+const domainsCache = {};
+
+// Cache for TempMail.lol messages
+const tempMailLolCache = {};
+
+// Create a new email address
+async function createAddress(service, domain = null) {
+  console.log('createAddress called with:', service, domain);
   
-  // Cache for domains and messages
-  const domainsCache = {};
-  const tempMailLolCache = {};
-
-  // Utility functions
-  function generateRandomString(length = 10) {
-    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-    return Array.from({ length }, () => 
-      chars.charAt(Math.floor(Math.random() * chars.length))
-    ).join('');
-  }
-
-  // Create a new email address
-  createAddress = async function(service, domain = null) {
-    console.log('createAddress called with:', service, domain);
-    
-    switch (service) {
+  switch (service) {
       case 'guerrillamail':
         return createGuerrillaMailAddress(domain);
       case 'mailgw':
@@ -70,10 +58,10 @@ function initializeAPI() {
       default:
         throw new Error(`Unknown service: ${service}`);
     }
-  };
-
-  // Get messages for an address
-  getMessages = async function(service, token) {
+  }
+  
+  // Get messages for an address - Expose as global function
+  async function getMessages(service, token) {
     console.log('getMessages called with:', service);
     
     switch (service) {
@@ -90,10 +78,10 @@ function initializeAPI() {
       default:
         throw new Error(`Unknown service: ${service}`);
     }
-  };
-
-  // Fetch a specific message
-  fetchMessage = async function(service, token, messageId) {
+  }
+  
+  // Fetch a specific message - Expose as global function
+  async function fetchMessage(service, token, messageId) {
     console.log('fetchMessage called with:', service, messageId);
     
     switch (service) {
@@ -110,13 +98,13 @@ function initializeAPI() {
       default:
         throw new Error(`Unknown service: ${service}`);
     }
-  };
-
+  }
+  
   // ==============================
   // Guerrilla Mail API implementation
   // ==============================
   const GUERRILLA_API_URL = 'https://api.guerrillamail.com/ajax.php';
-
+  
   async function createGuerrillaMailAddress(domain = null) {
     if (!domain) {
       domain = SERVICES.guerrillamail.domains[0];
@@ -168,7 +156,7 @@ function initializeAPI() {
       };
     }
   }
-
+  
   async function getGuerrillaMailMessages(token) {
     const params = new URLSearchParams({
       'f': 'get_email_list',
@@ -203,7 +191,7 @@ function initializeAPI() {
       receive_time: Date.now()
     }));
   }
-
+  
   async function fetchGuerrillaMailMessage(token, messageId) {
     const params = new URLSearchParams({
       'f': 'fetch_email',
@@ -261,54 +249,47 @@ function initializeAPI() {
       };
     }
   }
-
-// ==============================
-// Mail.gw API implementation - FULL UPDATED VERSION
-// ==============================
-const MAILGW_API_URL = 'https://api.mail.gw';
-
-async function getMailGwDomains() {
-  if (domainsCache.mailgw) {
-    return domainsCache.mailgw;
-  }
   
-  const response = await fetch(`${MAILGW_API_URL}/domains`);
   
-  if (!response.ok) {
-    throw new Error(`HTTP error: ${response.status}`);
-  }
+  // ==============================
+  // Mail.gw API implementation
+  // ==============================
+  const MAILGW_API_URL = 'https://api.mail.gw';
   
-  const data = await response.json();
-  const domains = data['hydra:member'].map(d => d.domain);
-  
-  // Cache the domains
-  domainsCache.mailgw = domains;
-  return domains;
-}
-
-async function createMailGwAddress(domain = null) {
-  try {
-    // Always get fresh domains from the API rather than using the provided domain
-    const domains = await getMailGwDomains();
-    if (!domains || domains.length === 0) {
-      throw new Error("No domains available for Mail.gw");
+  async function getMailGwDomains() {
+    if (domainsCache.mailgw) {
+      return domainsCache.mailgw;
     }
     
-    // Use the first domain from the API instead of what was provided
-    const validDomain = domains[0];
+    const response = await fetch(`${MAILGW_API_URL}/domains`);
     
-    const local = generateRandomString(12);
-    const email = `${local}@${validDomain}`;
-    const password = generateRandomString(16);
+    if (!response.ok) {
+      throw new Error(`HTTP error: ${response.status}`);
+    }
     
-    console.log(`Creating Mail.gw account with domain: ${validDomain}`);
+    const data = await response.json();
+    const domains = data['hydra:member'].map(d => d.domain);
+    
+    domainsCache.mailgw = domains;
+    return domains;
+  }
+  
+  async function createMailGwAddress(domain = null) {
+    if (!domain) {
+      // Get available domains
+      const domains = await getMailGwDomains();
+      domain = domains[Math.floor(Math.random() * domains.length)];
+    }
+    
+    const local = generateRandomString();
+    const email = `${local}@${domain}`;
+    const password = generateRandomString(12);
     
     // Create account
     const createResponse = await fetch(`${MAILGW_API_URL}/accounts`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify({
         address: email,
@@ -316,28 +297,15 @@ async function createMailGwAddress(domain = null) {
       })
     });
     
-    // Handle potential errors
     if (!createResponse.ok) {
-      let errorText;
-      try {
-        const errorJson = await createResponse.json();
-        errorText = JSON.stringify(errorJson);
-      } catch {
-        errorText = await createResponse.text();
-      }
-      console.error('Mail.gw account creation failed:', errorText);
-      throw new Error(`Mail.gw HTTP error: ${createResponse.status} - ${errorText.substring(0, 100)}`);
+      throw new Error(`HTTP error: ${createResponse.status}`);
     }
-    
-    // Wait a bit for account to propagate
-    await new Promise(resolve => setTimeout(resolve, 500));
     
     // Get token
     const tokenResponse = await fetch(`${MAILGW_API_URL}/token`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify({
         address: email,
@@ -346,15 +314,7 @@ async function createMailGwAddress(domain = null) {
     });
     
     if (!tokenResponse.ok) {
-      let errorText;
-      try {
-        const errorJson = await tokenResponse.json();
-        errorText = JSON.stringify(errorJson);
-      } catch {
-        errorText = await tokenResponse.text();
-      }
-      console.error('Mail.gw token fetch failed:', errorText);
-      throw new Error(`Mail.gw HTTP error: ${tokenResponse.status} - ${errorText.substring(0, 100)}`);
+      throw new Error(`HTTP error: ${tokenResponse.status}`);
     }
     
     const tokenData = await tokenResponse.json();
@@ -362,43 +322,12 @@ async function createMailGwAddress(domain = null) {
       email: email,
       token: tokenData.token
     };
-  } catch (error) {
-    console.error('Mail.gw address creation error:', error);
-    throw error;
-  }
-}
-
-async function getMailGwMessages(token) {
-  const response = await fetch(`${MAILGW_API_URL}/messages`, {
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Accept': 'application/json'
-    }
-  });
-  
-  if (!response.ok) {
-    throw new Error(`HTTP error: ${response.status}`);
   }
   
-  const data = await response.json();
-  const messages = data['hydra:member'] || [];
-  
-  // Normalize message format
-  return messages.map(msg => ({
-    mail_id: msg.id,
-    subject: msg.subject || 'No Subject',
-    mail_from: msg.from?.address || 'Unknown',
-    mail_date: msg.createdAt || '',
-    receive_time: Date.now()
-  }));
-}
-
-async function fetchMailGwMessage(token, messageId) {
-  try {
-    const response = await fetch(`${MAILGW_API_URL}/messages/${messageId}`, {
+  async function getMailGwMessages(token) {
+    const response = await fetch(`${MAILGW_API_URL}/messages`, {
       headers: {
-        'Authorization': `Bearer ${token}`,
-        'Accept': 'application/json'
+        'Authorization': `Bearer ${token}`
       }
     });
     
@@ -406,60 +335,85 @@ async function fetchMailGwMessage(token, messageId) {
       throw new Error(`HTTP error: ${response.status}`);
     }
     
-    const msg = await response.json();
+    const data = await response.json();
+    const messages = data['hydra:member'] || [];
     
-    // Prioritize HTML content if available
-    let htmlContent = msg.html || '';
-    let textContent = msg.text || '';
-    
-    // Check alternate locations
-    if (!htmlContent && !textContent) {
-      if (msg.payload) {
-        htmlContent = msg.payload.html || '';
-        textContent = msg.payload.text || '';
-      }
-    }
-    
-    // Ensure content is a string
-    if (Array.isArray(htmlContent)) {
-      htmlContent = htmlContent.join('\n');
-    }
-    if (Array.isArray(textContent)) {
-      textContent = textContent.join('\n');
-    }
-    
-    // Use HTML if available, else text
-    const finalContent = htmlContent || textContent;
-    
-    // Calculate size based on content length
-    const messageSize = new TextEncoder().encode(finalContent).length;
-    
-    return {
-      mail_body: finalContent,
-      mail_from: msg.from?.address || 'Unknown',
+    // Normalize message format
+    return messages.map(msg => ({
+      mail_id: msg.id,
       subject: msg.subject || 'No Subject',
-      mail_date: msg.createdAt || new Date().toISOString(),
-      mail_size: messageSize,
+      mail_from: msg.from?.address || 'Unknown',
+      mail_date: msg.createdAt || '',
       receive_time: Date.now()
-    };
-  } catch (error) {
-    console.error('Mail.gw fetch_message error:', error);
-    return {
-      mail_body: `Error loading message: ${error.message}`,
-      mail_from: 'Unknown',
-      subject: 'Error retrieving message',
-      mail_date: new Date().toISOString(),
-      mail_size: 0,
-      receive_time: Date.now()
-    };
+    }));
   }
-}
-
+  
+  async function fetchMailGwMessage(token, messageId) {
+    try {
+      const response = await fetch(`${MAILGW_API_URL}/messages/${messageId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error: ${response.status}`);
+      }
+      
+      const msg = await response.json();
+      
+      // Prioritize HTML content if available
+      let htmlContent = msg.html || '';
+      let textContent = msg.text || '';
+      
+      // Check alternate locations
+      if (!htmlContent && !textContent) {
+        if (msg.payload) {
+          htmlContent = msg.payload.html || '';
+          textContent = msg.payload.text || '';
+        }
+      }
+      
+      // Ensure content is a string
+      if (Array.isArray(htmlContent)) {
+        htmlContent = htmlContent.join('\n');
+      }
+      if (Array.isArray(textContent)) {
+        textContent = textContent.join('\n');
+      }
+      
+      // Use HTML if available, else text
+      const finalContent = htmlContent || textContent;
+      
+      // Calculate size based on content length
+      const messageSize = new TextEncoder().encode(finalContent).length;
+      
+      return {
+        mail_body: finalContent,
+        mail_from: msg.from?.address || 'Unknown',
+        subject: msg.subject || 'No Subject',
+        mail_date: msg.createdAt || new Date().toISOString(),
+        mail_size: messageSize,
+        receive_time: Date.now()
+      };
+    } catch (error) {
+      console.error('MailGwAPI fetch_message error:', error);
+      return {
+        mail_body: `Error loading message: ${error.message}`,
+        mail_from: 'Unknown',
+        subject: 'Error retrieving message',
+        mail_date: new Date().toISOString(),
+        mail_size: 0,
+        receive_time: Date.now()
+      };
+    }
+  }
+  
   // ==============================
-  // DropMail.me API implementation 
+  // DropMail.me API implementation
   // ==============================
   const DROPMAIL_API_URL = 'https://dropmail.me/api/graphql';
-
+  
   async function createDropMailAddress(domain = null) {
     const token = generateRandomString(12);
     const query = `
@@ -502,7 +456,7 @@ async function fetchMailGwMessage(token, messageId) {
       throw error;
     }
   }
-
+  
   async function getDropMailMessages(token) {
     const [apiToken, sessionId] = token.split('|');
     const query = `
@@ -557,7 +511,7 @@ async function fetchMailGwMessage(token, messageId) {
       throw error;
     }
   }
-
+  
   async function fetchDropMailMessage(token, messageId) {
     try {
       const [apiToken, sessionId] = token.split('|');
@@ -697,18 +651,17 @@ async function fetchMailGwMessage(token, messageId) {
       };
     }
   }
-
-// ==============================
-// Mail.tm API implementation - FULL UPDATED VERSION
-// ==============================
-const MAILTM_API_URL = 'https://api.mail.tm';
-
-async function getMailTmDomains() {
-  if (domainsCache.mailtm) {
-    return domainsCache.mailtm;
-  }
   
-  try {
+  // ==============================
+  // Mail.tm API implementation
+  // ==============================
+  const MAILTM_API_URL = 'https://api.mail.tm';
+  
+  async function getMailTmDomains() {
+    if (domainsCache.mailtm) {
+      return domainsCache.mailtm;
+    }
+    
     const response = await fetch(`${MAILTM_API_URL}/domains`);
     
     if (!response.ok) {
@@ -718,69 +671,49 @@ async function getMailTmDomains() {
     const data = await response.json();
     const domains = data['hydra:member'].map(d => d.domain);
     
-    // Cache the domains
     domainsCache.mailtm = domains;
     return domains;
-  } catch (error) {
-    console.error('Error getting Mail.tm domains:', error);
-    // Return a fallback domain list that's known to work
-    return ['greencafe24.com', 'daymailonline.com', 'bay0.org'];
   }
-}
-
-async function createMailTmAddress(domain = null) {
-  try {
-    // Always get fresh domains from the API
-    const domains = await getMailTmDomains();
-    if (!domains || domains.length === 0) {
-      throw new Error("No domains available for Mail.tm");
+  
+  async function createMailTmAddress(domain = null) {
+    if (!domain) {
+      // Get available domains
+      const domains = await getMailTmDomains();
+      if (!domains || domains.length === 0) {
+        throw new Error("No domains available");
+      }
+      domain = domains[Math.floor(Math.random() * domains.length)];
     }
     
-    // Use the first valid domain from the API
-    const validDomain = domains[0]; 
+    const local = generateRandomString(10);
+    const email = `${local}@${domain}`;
+    const password = generateRandomString(12);
     
-    const local = generateRandomString(12);
-    const email = `${local}@${validDomain}`;
-    const password = generateRandomString(20);
-    
-    console.log(`Creating Mail.tm account with domain: ${validDomain}`);
-    
-    // Create account with proper content type and handling
+    // Create account
+    const payload = { address: email, password };
     const createResponse = await fetch(`${MAILTM_API_URL}/accounts`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        address: email,
-        password: password
-      })
+      body: JSON.stringify(payload)
     });
     
-    // Handle errors properly - don't read the body twice
     if (!createResponse.ok) {
-      const status = createResponse.status;
-      throw new Error(`Mail.tm HTTP error: ${status}`);
+      throw new Error(`HTTP error: ${createResponse.status}`);
     }
     
-    // Wait a bit for account to propagate
-    await new Promise(resolve => setTimeout(resolve, 500));
-    
-    // Get token - reuse the same credentials
+    // Get token
     const tokenResponse = await fetch(`${MAILTM_API_URL}/token`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        address: email,
-        password: password
-      })
+      body: JSON.stringify(payload)
     });
     
     if (!tokenResponse.ok) {
-      const status = tokenResponse.status;
-      throw new Error(`Mail.tm token HTTP error: ${status}`);
+      throw new Error(`HTTP error: ${tokenResponse.status}`);
     }
     
     const tokenData = await tokenResponse.json();
@@ -788,18 +721,12 @@ async function createMailTmAddress(domain = null) {
       email,
       token: tokenData.token
     };
-  } catch (error) {
-    console.error('Mail.tm address creation error:', error);
-    throw error;
   }
-}
-
-async function getMailTmMessages(token) {
-  try {
+  
+  async function getMailTmMessages(token) {
     const response = await fetch(`${MAILTM_API_URL}/messages`, {
       headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
+        'Authorization': `Bearer ${token}`
       }
     });
     
@@ -818,76 +745,71 @@ async function getMailTmMessages(token) {
       mail_date: msg.createdAt || '',
       receive_time: Date.now()
     }));
-  } catch (error) {
-    console.error('Error getting Mail.tm messages:', error);
-    throw error;
   }
-}
-
-async function fetchMailTmMessage(token, messageId) {
-  try {
-    const response = await fetch(`${MAILTM_API_URL}/messages/${messageId}`, {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
+  
+  async function fetchMailTmMessage(token, messageId) {
+    try {
+      const response = await fetch(`${MAILTM_API_URL}/messages/${messageId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error: ${response.status}`);
       }
-    });
-    
-    if (!response.ok) {
-      throw new Error(`HTTP error: ${response.status}`);
+      
+      const msg = await response.json();
+      
+      // Prioritize HTML content if available
+      let htmlContent = msg.html || '';
+      let textContent = msg.text || '';
+      
+      // Check if content exists at alternate locations
+      if (!htmlContent && !textContent && msg.intro) {
+        textContent = msg.intro;
+      }
+      
+      // Ensure content is a string
+      if (Array.isArray(htmlContent)) {
+        htmlContent = htmlContent.join('\n');
+      }
+      if (Array.isArray(textContent)) {
+        textContent = textContent.join('\n');
+      }
+      
+      // Use HTML if available, else text
+      const finalContent = htmlContent || textContent;
+      
+      // Calculate size based on content length
+      const messageSize = new TextEncoder().encode(finalContent).length;
+      
+      return {
+        mail_body: finalContent,
+        mail_from: msg.from?.address || 'Unknown',
+        subject: msg.subject || 'No Subject',
+        mail_date: msg.createdAt || new Date().toISOString(),
+        mail_size: messageSize,
+        receive_time: Date.now()
+      };
+    } catch (error) {
+      console.error('MailTmAPI fetch_message error:', error);
+      return {
+        mail_body: `Error loading message: ${error.message}`,
+        mail_from: 'Unknown',
+        subject: 'Error retrieving message',
+        mail_date: new Date().toISOString(),
+        mail_size: 0,
+        receive_time: Date.now()
+      };
     }
-    
-    const msg = await response.json();
-    
-    // Prioritize HTML content if available
-    let htmlContent = msg.html || '';
-    let textContent = msg.text || '';
-    
-    // Check if content exists at alternate locations
-    if (!htmlContent && !textContent && msg.intro) {
-      textContent = msg.intro;
-    }
-    
-    // Ensure content is a string
-    if (Array.isArray(htmlContent)) {
-      htmlContent = htmlContent.join('\n');
-    }
-    if (Array.isArray(textContent)) {
-      textContent = textContent.join('\n');
-    }
-    
-    // Use HTML if available, else text
-    const finalContent = htmlContent || textContent;
-    
-    // Calculate size based on content length
-    const messageSize = new TextEncoder().encode(finalContent).length;
-    
-    return {
-      mail_body: finalContent,
-      mail_from: msg.from?.address || 'Unknown',
-      subject: msg.subject || 'No Subject',
-      mail_date: msg.createdAt || new Date().toISOString(),
-      mail_size: messageSize,
-      receive_time: Date.now()
-    };
-  } catch (error) {
-    console.error('Mail.tm fetch_message error:', error);
-    return {
-      mail_body: `Error loading message: ${error.message}`,
-      mail_from: 'Unknown',
-      subject: 'Error retrieving message',
-      mail_date: new Date().toISOString(),
-      mail_size: 0,
-      receive_time: Date.now()
-    };
   }
-}
-
+  
   // ==============================
   // TempMail.lol API implementation
   // ==============================
   const TEMPMAIL_LOL_API_URL = 'https://api.tempmail.lol';
-
+  
   async function createTempMailLolAddress(domain = null) {
     // Use the /generate/rush endpoint (faster)
     const url = `${TEMPMAIL_LOL_API_URL}/generate/rush`;
@@ -909,7 +831,7 @@ async function fetchMailTmMessage(token, messageId) {
       token: token
     };
   }
-
+  
   async function getTempMailLolMessages(token) {
     const url = `${TEMPMAIL_LOL_API_URL}/auth/${token}`;
     
@@ -974,7 +896,7 @@ async function fetchMailTmMessage(token, messageId) {
       receive_time: msg.receive_time
     }));
   }
-
+  
   async function fetchTempMailLolMessage(token, messageId) {
     try {
       // First try to get from cache
@@ -1076,202 +998,3 @@ async function fetchMailTmMessage(token, messageId) {
       };
     }
   }
-
-  // Log that API is initialized
-  console.log("API functions initialized:", {
-    createAddress: typeof createAddress,
-    getMessages: typeof getMessages,
-    fetchMessage: typeof fetchMessage
-  });
-}
-
-// Call the initialization function
-initializeAPI();
-
-const ALARM_NAME = 'refresh-emails';
-let refreshInterval = 5; // Default 5 seconds
-
-// Initialize when the extension loads
-chrome.runtime.onInstalled.addListener(() => {
-  // Load settings and set up initial alarm
-  chrome.storage.local.get(['refreshInterval'], (result) => {
-    if (result.refreshInterval) {
-      refreshInterval = result.refreshInterval;
-    }
-    setupRefreshAlarm(refreshInterval);
-  });
-  
-  console.log('Service worker initialized');
-});
-
-// Listen for alarm events
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === ALARM_NAME) {
-    refreshAllMailboxes();
-  }
-});
-
-// Setup the refresh alarm with the given interval in seconds
-function setupRefreshAlarm(seconds) {
-  chrome.alarms.clear(ALARM_NAME, () => {
-    chrome.alarms.create(ALARM_NAME, {
-      periodInMinutes: seconds / 60 // Convert seconds to minutes
-    });
-  });
-}
-
-// Listen for messages from the popup
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log('Background received message:', message.action);
-  
-  if (message.action === 'updateRefreshInterval') {
-    refreshInterval = message.interval;
-    chrome.storage.local.set({ refreshInterval });
-    setupRefreshAlarm(refreshInterval);
-    sendResponse({ success: true });
-    return false;
-  }
-  
-  if (message.action === 'refreshMailboxes') {
-    refreshAllMailboxes()
-      .then(data => sendResponse({ success: true, data }))
-      .catch(error => sendResponse({ success: false, error: error.message }));
-    return true; // Keep the message channel open for async response
-  }
-  
-  if (message.action === 'createAddress') {
-    try {
-      if (typeof createAddress !== 'function') {
-        console.error('createAddress function is not defined');
-        sendResponse({ 
-          success: false, 
-          error: 'createAddress is not defined'
-        });
-        return false;
-      }
-      
-      createAddress(message.service, message.domain)
-        .then(data => {
-          console.log('Address created:', data);
-          sendResponse({ success: true, data });
-        })
-        .catch(error => {
-          console.error('Error creating address:', error);
-          sendResponse({ success: false, error: error.message });
-        });
-      return true; // Keep the message channel open for async response
-    } catch (error) {
-      console.error('Exception creating address:', error);
-      sendResponse({ success: false, error: error.message });
-      return false;
-    }
-  }
-  
-  if (message.action === 'getMessages') {
-    try {
-      if (typeof getMessages !== 'function') {
-        console.error('getMessages function is not defined');
-        sendResponse({ 
-          success: false, 
-          error: 'getMessages is not defined' 
-        });
-        return false;
-      }
-      
-      getMessages(message.service, message.token)
-        .then(data => sendResponse({ success: true, data }))
-        .catch(error => sendResponse({ success: false, error: error.message }));
-      return true; // Keep the message channel open for async response
-    } catch (error) {
-      sendResponse({ success: false, error: error.message });
-      return false;
-    }
-  }
-  
-  if (message.action === 'fetchMessage') {
-    try {
-      if (typeof fetchMessage !== 'function') {
-        console.error('fetchMessage function is not defined');
-        sendResponse({ 
-          success: false, 
-          error: 'fetchMessage is not defined' 
-        });
-        return false;
-      }
-      
-      fetchMessage(message.service, message.token, message.messageId)
-        .then(data => sendResponse({ success: true, data }))
-        .catch(error => sendResponse({ success: false, error: error.message }));
-      return true; // Keep the message channel open for async response
-    } catch (error) {
-      sendResponse({ success: false, error: error.message });
-      return false;
-    }
-  }
-});
-
-// Refresh all mailboxes
-async function refreshAllMailboxes() {
-  try {
-    if (typeof getMessages !== 'function') {
-      throw new Error('getMessages function is not defined');
-    }
-    
-    // Get all saved addresses
-    const { addresses = {} } = await chrome.storage.local.get('addresses');
-    if (Object.keys(addresses).length === 0) return { success: true, message: 'No addresses to refresh' };
-    
-    const results = {};
-    const recentlyUpdated = new Set();
-    
-    // Process each address
-    for (const [email, data] of Object.entries(addresses)) {
-      const { service, token, messages = [] } = data;
-      
-      try {
-        // Get new messages
-        const newMessages = await getMessages(service, token);
-        
-        // Check if there are new messages
-        if (newMessages.length > messages.length) {
-          recentlyUpdated.add(email);
-          
-          // Send notification for new messages
-          const numNewMessages = newMessages.length - messages.length;
-          chrome.notifications.create(`new-mail-${Date.now()}`, {
-            type: 'basic',
-            iconUrl: '/assets/icon128.png',
-            title: 'New Email Received',
-            message: `You have ${numNewMessages} new message${numNewMessages > 1 ? 's' : ''} in ${email}`
-          });
-        }
-        
-        // Save updated messages
-        addresses[email].messages = newMessages;
-        addresses[email].lastUpdated = Date.now();
-        
-        results[email] = { 
-          success: true, 
-          count: newMessages.length 
-        };
-      } catch (error) {
-        console.error(`Error refreshing messages for ${email}:`, error);
-        results[email] = { 
-          success: false, 
-          error: error.message 
-        };
-      }
-    }
-    
-    // Save updated addresses
-    await chrome.storage.local.set({ 
-      addresses,
-      recentlyUpdated: Array.from(recentlyUpdated)
-    });
-    
-    return { success: true, results };
-  } catch (error) {
-    console.error('Error in refreshAllMailboxes:', error);
-    return { success: false, error: error.message };
-  }
-}
